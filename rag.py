@@ -25,10 +25,14 @@ import re
 import sqlite3
 import shutil
 import time
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
+
+# Suppress google.generativeai deprecation warning
+warnings.filterwarnings("ignore", category=FutureWarning, module="google.generativeai.*")
 
 import chromadb
 import fitz
