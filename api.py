@@ -21,14 +21,16 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
-from typing import List
+from typing import List, Optional
 from urllib.parse import unquote
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from rag import InvincibleRAG
+from video_gen import VideoGenerator
 
 
 class ChatRequest(BaseModel):
@@ -43,14 +45,34 @@ class FeedbackRequest(BaseModel):
     session_id: str = Field(min_length=1)
 
 
+class VideoRequest(BaseModel):
+    session_id: str = Field(min_length=1)
+    query: Optional[str] = None  # optional — generates fresh answer if not provided
+
+
 @lru_cache(maxsize=1)
 def get_rag() -> InvincibleRAG:
     return InvincibleRAG()
 
 
+def get_video_generator() -> VideoGenerator:
+    return VideoGenerator(output_dir="./videos")
+
+
+# ... (imports)
+from fastapi.staticfiles import StaticFiles
+
+# ... (models and helper functions)
+
 app = FastAPI(title="INVINCIBLE API", version="1.0.0")
 
+# Mount static files to serve generated videos
+if not os.path.exists("./videos"):
+    os.makedirs("./videos")
+app.mount("/videos", StaticFiles(directory="./videos"), name="videos")
+
 app.add_middleware(
+# ... (rest of middleware)
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
@@ -112,9 +134,18 @@ def chat(request: ChatRequest) -> dict:
     if not rag.list_ingested_files():
         raise HTTPException(status_code=400, detail="Please upload at least one document first.")
     try:
-        return rag.generate_answer(request.query, request.session_id)
+        answer = rag.generate_answer(request.query, request.session_id)
+        # Ensure all fields are JSON-serializable
+        return {
+            "answer": str(answer.get("answer", "")),
+            "sources": answer.get("sources", []),
+            "chunks_used": answer.get("chunks_used", []),
+            "model": str(answer.get("model", "")),
+            "scores": answer.get("scores", []),
+        }
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        error_msg = str(exc).replace("\n", " ").replace('"', "'")
+        raise HTTPException(status_code=500, detail=error_msg) from exc
 
 
 @app.delete("/api/files/{filename:path}")
@@ -139,5 +170,38 @@ def feedback(request: FeedbackRequest) -> dict:
             session_id=request.session_id,
         )
         return {"status": "ok"}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/generate-video")
+def generate_video(request: VideoRequest) -> dict:
+    rag = get_rag()
+    if not rag.list_ingested_files():
+        raise HTTPException(status_code=400, detail="Please upload at least one document first.")
+
+    # Use provided query or retrieve the last answer from memory
+    if request.query:
+        answer_data = rag.generate_answer(request.query, request.session_id)
+        answer_text = answer_data.get("answer", "")
+    else:
+        memory_str = rag.format_memory_as_string(request.session_id)
+        if not memory_str.strip():
+            raise HTTPException(status_code=400, detail="No prior conversation found. Provide a query to generate a video.")
+        # Extract the last assistant answer from memory
+        lines = memory_str.strip().split("\n")
+        answer_text = ""
+        for line in reversed(lines):
+            if line.startswith("Assistant:"):
+                answer_text = line[len("Assistant:") :].strip()
+                break
+        if not answer_text:
+            raise HTTPException(status_code=400, detail="Could not extract an answer from the conversation history.")
+
+    try:
+        video_path = get_video_generator().generate(answer_text, request.session_id)
+        video_filename = os.path.basename(video_path)
+        video_url = f"/videos/{video_filename}"
+        return {"video_url": video_url}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

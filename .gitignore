@@ -34,6 +34,7 @@ wheels/
 venv/
 .venv/
 .venv312/
+venv_new/
 node_modules/
 
 # IDE
@@ -50,6 +51,7 @@ npm-debug.log
 yarn-error.log
 dist/
 frontend/dist/
+.vite/
 
 # Database
 chroma_db/
@@ -64,3 +66,7 @@ chroma_db.backup-*/
 # OS
 .DS_Store
 Thumbs.db
+
+# Project specific
+videos/
+backend.log

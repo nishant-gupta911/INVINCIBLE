@@ -32,10 +32,13 @@ from __future__ import annotations
 import os
 from uuid import uuid4
 
+import requests
 import streamlit as st
 from dotenv import load_dotenv
 
 from rag import InvincibleRAG
+
+API_URL = os.environ.get("API_URL", "http://localhost:8000")
 
 
 load_dotenv()
@@ -207,6 +210,34 @@ def render_feedback_ui() -> None:
                     st.error(f"Something went wrong: {exc}")
             else:
                 st.warning("Please enter the correct answer before submitting.")
+
+    st.divider()
+
+    # --- Video Generation ---
+    if st.session_state.last_answer:
+        st.markdown("**🎬 Video Summary**")
+        if st.button("🎬 Generate Video", key="gen_video_btn", use_container_width=True):
+            with st.spinner("🎬 Generating narrated video (this may take a moment)..."):
+                try:
+                    resp = requests.post(
+                        f"{API_URL}/api/generate-video",
+                        json={"session_id": st.session_state.session_id},
+                        timeout=120,
+                    )
+                    if resp.status_code == 200:
+                        video_path = resp.json().get("video_path", "")
+                        if video_path and os.path.exists(video_path):
+                            with open(video_path, "rb") as f:
+                                st.video(f.read(), format="video/mp4")
+                            st.success("✅ Video generated successfully!")
+                        else:
+                            st.error("Video was generated but file not found.")
+                    else:
+                        st.error(f"Failed to generate video: {resp.text}")
+                except requests.exceptions.ConnectionError:
+                    st.error("Could not connect to the API server. Make sure it's running on port 8000.")
+                except Exception as exc:
+                    st.error(f"Something went wrong: {exc}")
 
 
 def main() -> None:

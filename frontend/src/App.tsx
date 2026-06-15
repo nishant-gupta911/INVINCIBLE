@@ -9,7 +9,9 @@ import {
   ShieldCheck,
   Trash2,
   UploadCloud,
-  User
+  User,
+  Video,
+  Play
 } from "lucide-react";
 import ClaudeChatInput, { AttachedFile } from "./components/ui/claude-style-chat-input";
 
@@ -18,6 +20,8 @@ type ChatEntry = {
   role: "user" | "assistant";
   content: string;
   meta?: string;
+  videoUrl?: string;
+  isVideoLoading?: boolean;
 };
 
 type SendPayload = {
@@ -80,16 +84,25 @@ function App() {
   const [error, setError] = useState<string | null>(null);
 
   const refreshSidebarData = async () => {
-    const [filesRes, statsRes] = await Promise.all([fetch(`${API_BASE}/files`), fetch(`${API_BASE}/stats`)]);
+    try {
+      const [filesRes, statsRes] = await Promise.all([
+        fetch(`${API_BASE}/files`),
+        fetch(`${API_BASE}/stats`)
+      ]);
 
-    if (filesRes.ok) {
-      const filesJson = await filesRes.json();
-      setDocuments(filesJson.files ?? []);
-    }
+      if (filesRes.ok) {
+        const filesText = await filesRes.text();
+        const filesJson = filesText ? JSON.parse(filesText) : {};
+        setDocuments(filesJson.files ?? []);
+      }
 
-    if (statsRes.ok) {
-      const statsJson = await statsRes.json();
-      setStatsData(statsJson);
+      if (statsRes.ok) {
+        const statsText = await statsRes.text();
+        const statsJson = statsText ? JSON.parse(statsText) : {};
+        setStatsData(statsJson);
+      }
+    } catch (err) {
+      console.error("Failed to refresh sidebar data:", err);
     }
   };
 
@@ -106,14 +119,55 @@ function App() {
         method: "DELETE"
       });
 
+      const responseText = await response.text();
+      let payload = {};
+      
+      if (responseText) {
+        try {
+          payload = JSON.parse(responseText);
+        } catch {
+          payload = {};
+        }
+      }
+
       if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        throw new Error(payload.detail || "Failed to delete file.");
+        throw new Error(payload.detail || payload.message || "Failed to delete file.");
       }
 
       await refreshSidebarData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete file.");
+    }
+  };
+
+  const handleGenerateVideo = async (messageId: string) => {
+    setMessages((prev) =>
+      prev.map((m) => (m.id === messageId ? { ...m, isVideoLoading: true } : m))
+    );
+
+    try {
+      const response = await fetch(`${API_BASE}/generate-video`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId }),
+      });
+
+      const data = await response.json();
+      if (response.ok && data.video_url) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === messageId ? { ...m, videoUrl: data.video_url, isVideoLoading: false } : m
+          )
+        );
+      } else {
+        throw new Error(data.detail || "Failed to generate video");
+      }
+    } catch (err) {
+      console.error(err);
+      setMessages((prev) =>
+        prev.map((m) => (m.id === messageId ? { ...m, isVideoLoading: false } : m))
+      );
+      setError(err instanceof Error ? err.message : "Video generation failed");
     }
   };
 
@@ -133,10 +187,18 @@ function App() {
           method: "POST",
           body: formData
         });
-        const uploadJson = await uploadResponse.json();
+
+        const uploadText = await uploadResponse.text();
+        let uploadJson;
+        
+        try {
+          uploadJson = uploadText ? JSON.parse(uploadText) : {};
+        } catch {
+          throw new Error(`Upload failed - invalid response: ${uploadText.substring(0, 200)}`);
+        }
 
         if (!uploadResponse.ok) {
-          throw new Error(uploadJson.detail || "Upload failed.");
+          throw new Error(uploadJson.detail || uploadJson.message || "Upload failed.");
         }
 
         const failed = (uploadJson.results || []).filter((item: { status: string }) => item.status === "error");
@@ -156,21 +218,42 @@ function App() {
           session_id: sessionId
         })
       });
-      const chatJson = await chatResponse.json();
+
+      let chatJson;
+      const responseText = await chatResponse.text();
+      
+      try {
+        chatJson = responseText ? JSON.parse(responseText) : {};
+      } catch {
+        throw new Error(`Failed to parse API response: ${responseText.substring(0, 200)}`);
+      }
 
       if (!chatResponse.ok) {
-        throw new Error(chatJson.detail || "Chat request failed.");
+        throw new Error(chatJson.detail || chatJson.message || `Chat request failed: ${responseText}`);
       }
+
+      if (!chatJson.answer) {
+        throw new Error("No answer received from the API.");
+      }
+
+      const assistantMessageId = crypto.randomUUID();
+      const assistantMessage = chatJson.answer;
+      const shouldAutoGenerate = /video overview|video summary|generate video/i.test(assistantMessage);
 
       setMessages((prev) => [
         ...prev,
         {
-          id: crypto.randomUUID(),
+          id: assistantMessageId,
           role: "assistant",
-          content: chatJson.answer,
-          meta: chatJson.model
+          content: assistantMessage,
+          meta: APP_NAME,
+          isVideoLoading: shouldAutoGenerate
         }
       ]);
+
+      if (shouldAutoGenerate) {
+        handleGenerateVideo(assistantMessageId);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Something went wrong.";
       setError(message);
@@ -180,7 +263,7 @@ function App() {
           id: crypto.randomUUID(),
           role: "assistant",
           content: `Something went wrong: ${message}`,
-          meta: "API error"
+          meta: `${APP_NAME} error`
         }
       ]);
     } finally {
@@ -238,6 +321,34 @@ function App() {
                 }`}
               >
                 <p className="whitespace-pre-wrap text-[15px] leading-7">{message.content}</p>
+                
+                {message.role === "assistant" && (
+                  <div className="mt-4 space-y-3">
+                    {message.videoUrl ? (
+                      <div className="overflow-hidden rounded-2xl border border-[#eadfce]">
+                        <video 
+                          src={`${API_BASE.replace("/api", "")}${message.videoUrl}`} 
+                          controls 
+                          className="w-full bg-black"
+                        />
+                      </div>
+                    ) : message.isVideoLoading ? (
+                      <div className="flex items-center gap-3 rounded-2xl border border-[#eadfce] bg-[#f8f1e6]/30 p-4">
+                        <Loader2 className="h-5 w-5 animate-spin text-[#d86f4d]" />
+                        <span className="text-sm font-medium text-[#7d7366]">Generating your video summary...</span>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => handleGenerateVideo(message.id)}
+                        className="inline-flex items-center gap-2 rounded-xl border border-[#eadfce] bg-[#fffaf4] px-4 py-2 text-sm font-medium text-[#414655] transition hover:bg-[#f8efe4]"
+                      >
+                        <Play className="h-4 w-4 fill-current" />
+                        Generate Video Overview
+                      </button>
+                    )}
+                  </div>
+                )}
+
                 {message.meta && (
                   <p className={`mt-3 text-[11px] uppercase tracking-[0.2em] ${message.role === "user" ? "text-white/60" : "text-[#908575]"}`}>
                     {message.meta}
