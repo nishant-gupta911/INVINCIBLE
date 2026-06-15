@@ -6,6 +6,7 @@
 
 ✅ **Multi-format support** — PDFs, PowerPoint, Word docs, Markdown, CSV, images (PNG, JPG, BMP, WebP)  
 ✅ **Smart OCR** — Built-in Tesseract + Gemini vision fallback for scanned documents  
+✅ **🎬 Video Summaries** — Generate narrated MP4 videos from document answers  
 ✅ **Hybrid retrieval** — Dense embeddings + keyword search + user feedback memory  
 ✅ **Cross-encoder reranking** — Ranked results for better relevance  
 ✅ **Conversation memory** — Multi-turn chat with context awareness  
@@ -15,13 +16,14 @@
 ## Project Structure
 
 - [rag.py](rag.py) — Core RAG engine (ingestion, retrieval, generation)
+- [video_gen.py](video_gen.py) — 🎬 Narrated video generator (gTTS + MoviePy)
 - [api.py](api.py) — FastAPI REST service
 - [app.py](app.py) — Streamlit UI
 - [frontend/](frontend/) — React + TypeScript frontend
 
 ## Architecture
 
-The system uses a standard RAG pipeline with OCR-enhanced ingestion:
+The system uses a standard RAG pipeline with OCR-enhanced ingestion and a video synthesis layer:
 
 1. File ingestion
 2. Text extraction and OCR
@@ -31,6 +33,7 @@ The system uses a standard RAG pipeline with OCR-enhanced ingestion:
 6. Hybrid retrieval
 7. Cross-encoder reranking
 8. Gemini answer generation
+9. 🎬 Video synthesis (optional)
 
 ## Models And Methods
 
